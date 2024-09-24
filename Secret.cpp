@@ -7,11 +7,11 @@
 #include <vector>
 
 // Secret phrase as an unsigned int (72)
-const uint32_t SECRET_NUMBER = htonl(72);  // Convert 72 to network byte order
+const uint8_t SECRET_NUMBER = 72;  // Convert 72 to network byte order
 
 int main() {
     // List of secret ports to knock
-    std::vector<int> secret_ports = {4074};
+    std::vector<int> secret_ports = {4021};
 
     // Create a UDP socket
     int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);

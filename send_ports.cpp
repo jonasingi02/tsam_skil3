@@ -6,9 +6,6 @@
 #include <unistd.h>      // For close()
 #include <vector>
 
-// Your S.E.C.R.E.T signature (4 bytes)
-const uint32_t SECRET_SIGNATURE = htonl(0x12345678);  // Example signature
-
 int main() {
     // The list of secret ports
     std::vector<int> secret_ports = {4021, 4033, 4052, 4074};
@@ -42,18 +39,15 @@ int main() {
     int target_port = 4074;
     server_addr.sin_port = htons(target_port);  // Set the port to 4074
 
-    // Buffer to hold the knock message (signature + secret phrase)
+    // Buffer to hold the knock message (only the secret phrase)
     char buffer[1024];
-    
-    // Copy the S.E.C.R.E.T signature into the buffer
-    memcpy(buffer, &SECRET_SIGNATURE, sizeof(SECRET_SIGNATURE));
 
-    // Copy the secret phrase (comma-separated ports) after the signature in the buffer
-    strcpy(buffer + sizeof(SECRET_SIGNATURE), secret_phrase.c_str());
+    // Copy the secret phrase (comma-separated ports) into the buffer
+    strcpy(buffer, secret_phrase.c_str());
 
     // Send the knock message to port 4074
-    int send_result = sendto(sock, buffer, sizeof(SECRET_SIGNATURE) + secret_phrase.length(), 
-                             0, (struct sockaddr*)&server_addr, sizeof(server_addr));
+    int send_result = sendto(sock, buffer, secret_phrase.length(), 0, 
+                             (struct sockaddr*)&server_addr, sizeof(server_addr));
     
     if (send_result < 0) {
         std::cerr << "Failed to send knock to port " << target_port << std::endl;
