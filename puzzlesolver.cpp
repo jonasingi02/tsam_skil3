@@ -44,8 +44,11 @@ int main(int argc, char* argv[]) {
 
     // Solve the puzzles
     solve_1(sock1, ip_address, port1);  
+    std::cout << std::endl;
     solve_2(sock2, ip_address, port2);  
+    std::cout << std::endl;
     solve_3(sock3, ip_address, port3);  
+    std::cout << std::endl;
     solve_4(sock4, ip_address, port4);
 
     // Close the sockets
@@ -65,16 +68,16 @@ int solve_1(int sock, const char* ip_address, int port) {
     server_addr.sin_addr.s_addr = inet_addr(ip_address);
     server_addr.sin_port = htons(port);
 
-    uint32_t signature_network_order = htonl(GROUP_SECRET);  // Convert to network byte order
+    uint32_t signed_challenge = 0x6282cc28;
 
     // Step 2: Send the 4-byte message (the signature)
-    if (sendto(sock, &signature_network_order, sizeof(signature_network_order), 0, 
+    if (sendto(sock, &signed_challenge, sizeof(signed_challenge), 0, 
                (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
         std::cerr << "Failed to send signature to port " << port << std::endl;
         close(sock);
         return 1;
     }
-    std::cout << "4-byte signature sent to port " << port << std::endl;
+    std::cout << "4-byte signature: " << signed_challenge << "sent to port " << port << std::endl;
 
     // Step 3: Prepare to receive a response
     char response[1024];  // Buffer to hold the response
