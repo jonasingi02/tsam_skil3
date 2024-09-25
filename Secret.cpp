@@ -6,7 +6,7 @@
 #include <unistd.h>      // For close()
 
 // Group number (first byte)
-const uint8_t GROUP_NUMBER = 72;
+const uint8_t GROUP_NUMBER = 0x48;
 
 // Two constants to XOR
 const uint32_t FIRST_NUMBER = 0xc57429be;
@@ -19,7 +19,7 @@ int main() {
     // Create a UDP socket
     int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock < 0) {
-        std::cerr << "Failed to create socket." << std::endl;
+        std::cerr << "Failed to create soket." << std::endl;
         return 1;
     }
 
@@ -37,6 +37,10 @@ int main() {
     // Prepare the buffer to send (5 bytes: 1 byte for the group number and 4 bytes for the XOR result)
     uint8_t buffer[5];
     buffer[0] = GROUP_NUMBER;  // First byte is the group number
+    buffer[1] = 0x53;
+    buffer[2] = 0x91;
+    buffer[3] = 0xdf19;
+    buffer[4] = 0x5391df19;
 
     // Convert the XOR result to network byte order (big-endian) and copy into the buffer
     uint32_t xor_network_order = htonl(xor_result);
