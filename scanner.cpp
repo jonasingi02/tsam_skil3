@@ -45,7 +45,7 @@ int main(int argc, char* argv[]) {
 
          // Set a timeout for receiving a response
         struct timeval timeout;
-        timeout.tv_sec = 2;  // Wait for 2 seconds
+        timeout.tv_sec = 1;  // Wait for 2 seconds
         timeout.tv_usec = 0;
         setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (char*)&timeout, sizeof(timeout));
 
