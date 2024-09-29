@@ -7,6 +7,27 @@
 #include <unistd.h>       // For close()
 #include <errno.h>
 
+struct iphdr {
+    unsigned char ihl:4;      
+    unsigned char version:4;   
+    unsigned char tos;          
+    unsigned short tot_len;     
+    unsigned short id;         
+    unsigned short frag_off;    
+    unsigned char ttl;         
+    unsigned char protocol;     
+    unsigned short check;      
+    unsigned int saddr;         
+    unsigned int daddr;         
+};
+
+struct udphdr {
+    unsigned short source;      
+    unsigned short dest;        
+    unsigned short len;         
+    unsigned short check;       
+};
+
 // Function to calculate the checksum
 unsigned short checksum(void* vdata, size_t length) {
     char* data = (char*)vdata;
@@ -144,7 +165,8 @@ int main() {
             std::cout << "Destination Port: " << ntohs(recv_udp_header->dest) << std::endl;
         }
     }
-
+    
+    
     // Close the socket
     close(sock);
 
