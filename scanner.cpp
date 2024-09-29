@@ -59,7 +59,7 @@ int main(int argc, char* argv[]) {
         if (recv_len < 0) {
             continue;
         } else {
-            std::cout << "Received response from port " << port << ": " << std::string(buffer, recv_len) << std::endl;
+            std::cout << port <<  std::endl;
         }
     }
 
