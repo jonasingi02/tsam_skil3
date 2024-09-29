@@ -50,7 +50,7 @@ struct udphdr {
 
 // Function prototypes
 int solve_1(int sock, const char* ip_address, int port);
-void solve_2(int sock, const char* ip_address, int port);
+void solve_2(int sock, const char* ip_address, int port, char* your_ip);
 int solve_3(int sock, const char* ip_address, int port);
 void solve_4(int sock, const char* ip_address);
 unsigned short calc_checksum(unsigned short* data, int len);
@@ -86,7 +86,7 @@ int main(int argc, char* argv[]) {
     //Solve the puzzles
     solve_1(sock1, ip_address, port1);  
     std::cout << std::endl;
-    olve_2(sock2, ip_address, port2, "192.168.1.189"); 
+    solve_2(sock2, ip_address, port2, "192.168.1.189"); 
     std::cout << std::endl;
     solve_3(sock3, ip_address, port3);  
     std::cout << std::endl;
