@@ -1,29 +1,19 @@
 # Compiler
 CXX = g++
 
-# The name of the final executable
+# Target executable
 TARGET = puzzlesolver
 
-# Source files
-SRCS = puzzlesolver.cpp
-
-# Object files
-OBJS = $(SRCS:.cpp=.o)
+# Source file
+SRC = puzzlesolver.cpp
 
 # Default target to build the executable
-all: $(TARGET)
+all:
+	$(CXX) $(SRC) -o $(TARGET)
 
-# Rule to build the final executable
-$(TARGET): $(OBJS)
-	$(CXX) $(CXXFLAGS) -o $(TARGET) $(OBJS)
-
-# Rule to compile source files into object files
-%.o: %.cpp
-	$(CXX) $(CXXFLAGS) -c $< -o $@
-
-# Clean rule to remove compiled files
+# Clean rule to remove the executable
 clean:
-	rm -f $(OBJS) $(TARGET)
+	rm -f $(TARGET)
 
-# Phony targets (do not represent actual files)
+# Phony target to avoid conflicts with files named 'all' or 'clean'
 .PHONY: all clean
