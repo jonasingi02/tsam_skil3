@@ -1,5 +1,7 @@
 #include <iostream>
 #include <cstring>
+#include <chrono> 
+#include <thread>
 #include <sys/socket.h>
 #include <netinet/ip.h>
 #include <netinet/udp.h>  // For UDP header
@@ -28,23 +30,19 @@ struct udphdr {
     unsigned short check;       
 };
 
-// Function to calculate the checksum
 unsigned short checksum(void* vdata, size_t length) {
     char* data = (char*)vdata;
     unsigned long acc = 0;
     unsigned short* ptr = (unsigned short*)data;
 
-    // Sum all 16-bit words
     for (size_t i = 0; i < length / 2; i++) {
         acc += ntohs(ptr[i]);
     }
 
-    // If the length is odd, add the last byte
     if (length % 2) {
         acc += (ntohs(data[length - 1]) & 0xFF) << 8;
     }
 
-    // Fold acc down to 16 bits
     while (acc >> 16) {
         acc = (acc & 0xFFFF) + (acc >> 16);
     }
@@ -55,41 +53,62 @@ unsigned short checksum(void* vdata, size_t length) {
 int main() {
     const uint32_t signature = htonl(0x5391df19);  // The payload (signature)
 
-    // Create raw socket for sending with IPPROTO_UDP
-    int sock = socket(AF_INET, SOCK_RAW, IPPROTO_UDP);
+    // Create raw socket for sending with IPPROTO_RAW
+    int sock = socket(AF_INET, SOCK_RAW, IPPROTO_RAW);
     if (sock < 0) {
         std::cerr << "Failed to create socket: " << strerror(errno) << std::endl;
         return 1;
     }
 
-    // Destination address
+    // Create a standard UDP socket for receiving responses
+    int recsock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (recsock < 0) {
+        std::cerr << "Failed to create receive socket: " << strerror(errno) << std::endl;
+        close(sock);
+        return 1;
+    }
+
+    // Set socket options to allow address reuse
+    int optval = 1;
+    setsockopt(recsock, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
+
+    // Bind the receiving socket to the same port (4048) to listen for responses
+    struct sockaddr_in recv_addr;
+    recv_addr.sin_family = AF_INET;
+    recv_addr.sin_addr.s_addr = htonl(INADDR_ANY);  // Accept connections from any IP address
+    recv_addr.sin_port = htons(4048);  // Bind to the same port
+
+    if (bind(recsock, (struct sockaddr*)&recv_addr, sizeof(recv_addr)) < 0) {
+        std::cerr << "Failed to bind receive socket: " << strerror(errno) << std::endl;
+        close(sock);
+        close(recsock);
+        return 1;
+    }
+
     const char* server_ip = "130.208.246.249";  // Server IP
     struct sockaddr_in dest_addr;
     dest_addr.sin_family = AF_INET;
     dest_addr.sin_addr.s_addr = inet_addr(server_ip);
     dest_addr.sin_port = htons(4048);  // Destination port (UDP)
 
-    // Create IP header
     struct iphdr ip_header;
-    ip_header.version = 4;        // IPv4
-    ip_header.ihl = 5;            // Header length (5 words)
-    ip_header.tos = 0;            // Type of Service
-    ip_header.tot_len = htons(sizeof(struct iphdr) + sizeof(struct udphdr) + sizeof(signature));  // Total length (IP header + UDP header + payload)
-    ip_header.id = htons(54321);   // Identification
-    ip_header.frag_off = htons(0x8000);  // Don't fragment
-    ip_header.ttl = 64;           // Time to live
-    ip_header.protocol = IPPROTO_UDP;  // UDP protocol
-    ip_header.saddr = inet_addr("172.18.100.90");  // Source IP (change to your machine's IP)
-    ip_header.daddr = inet_addr(server_ip);  // Destination IP
+    ip_header.version = 4;       
+    ip_header.ihl = 5;           
+    ip_header.tos = 0;           
+    ip_header.tot_len = htons(sizeof(struct iphdr) + sizeof(struct udphdr) + sizeof(signature)); 
+    ip_header.id = htons(54321);   
+    ip_header.frag_off = htons(0x8000); 
+    ip_header.ttl = 64;           
+    ip_header.protocol = IPPROTO_UDP;  
+    ip_header.saddr = inet_addr("192.168.1.189");  
+    ip_header.daddr = inet_addr(server_ip);  
 
-    // Create UDP header
     struct udphdr udp_header;
-    udp_header.source = htons(12345);  // Source port
-    udp_header.dest = htons(4048);     // Destination port
-    udp_header.len = htons(sizeof(struct udphdr) + sizeof(signature));  // Length of UDP header + data
-    udp_header.check = 0;  // Checksum (optional, can be left as 0 for simplicity)
+    udp_header.source = htons(12345);  
+    udp_header.dest = htons(4048);     
+    udp_header.len = htons(sizeof(struct udphdr) + sizeof(signature));  
+    udp_header.check = 0;  
 
-    // Create a pseudo-header for UDP checksum calculation
     struct pseudo_header {
         uint32_t src_addr;
         uint32_t dst_addr;
@@ -104,71 +123,61 @@ int main() {
     psh.protocol = IPPROTO_UDP;
     psh.udp_len = udp_header.len;
 
-    // Buffer to hold the pseudo-header, UDP header, and data for checksum
     char pseudo_packet[sizeof(psh) + sizeof(udp_header) + sizeof(signature)];
     memcpy(pseudo_packet, &psh, sizeof(psh));
     memcpy(pseudo_packet + sizeof(psh), &udp_header, sizeof(udp_header));
     memcpy(pseudo_packet + sizeof(psh) + sizeof(udp_header), &signature, sizeof(signature));
 
-    // Calculate UDP checksum
     udp_header.check = checksum(pseudo_packet, sizeof(pseudo_packet));
 
-    // Buffer to hold the final packet (IP header + UDP header + data)
     char packet[sizeof(ip_header) + sizeof(udp_header) + sizeof(signature)];
-    memcpy(packet, &ip_header, sizeof(ip_header));   // Copy IP header into the packet
-    memcpy(packet + sizeof(ip_header), &udp_header, sizeof(udp_header));  // Copy UDP header
-    memcpy(packet + sizeof(ip_header) + sizeof(udp_header), &signature, sizeof(signature));  // Copy payload (signature)
+    memcpy(packet, &ip_header, sizeof(ip_header));  
+    memcpy(packet + sizeof(ip_header), &udp_header, sizeof(udp_header));  
+    memcpy(packet + sizeof(ip_header) + sizeof(udp_header), &signature, sizeof(signature));  
 
-    // Send the packet
     ssize_t sent_bytes = sendto(sock, packet, sizeof(packet), 0, 
                                 (struct sockaddr*)&dest_addr, sizeof(dest_addr));
     if (sent_bytes < 0) {
         std::cerr << "Failed to send packet: " << strerror(errno) << std::endl;
         close(sock);
+        close(recsock);
         return 1;
     }
 
     std::cout << "Packet sent successfully." << std::endl;
 
-    // Set timeout for receiving the response (e.g., 1 seconds)
-    struct timeval tv;
-    tv.tv_sec = 1;  
-    tv.tv_usec = 0;
-    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
-    // Buffer for receiving response
     char recv_buffer[1024];
     struct sockaddr_in from;
     socklen_t from_len = sizeof(from);
 
     // Receive the response
-    ssize_t recv_bytes = recvfrom(sock, recv_buffer, sizeof(recv_buffer), 0, 
+    ssize_t recv_bytes = recvfrom(recsock, recv_buffer, sizeof(recv_buffer), 0, 
                                   (struct sockaddr*)&from, &from_len);
     if (recv_bytes < 0) {
         std::cerr << "Failed to receive response: " << strerror(errno) << std::endl;
     } else {
-        std::cout << "Received response from IP: " << inet_ntoa(from.sin_addr) << std::endl;
-
-        // Print out the raw response in hex format
-        std::cout << "Raw response (hex): ";
-        for (ssize_t i = 0; i < recv_bytes; ++i) {
-            printf("%02x ", (unsigned char)recv_buffer[i]);
-        }
-        std::cout << std::endl;
-
-        // Optionally parse the response if it's UDP or ICMP
         struct iphdr* recv_ip_header = (struct iphdr*)recv_buffer;
         if (recv_ip_header->protocol == IPPROTO_UDP) {
             struct udphdr* recv_udp_header = (struct udphdr*)(recv_buffer + sizeof(struct iphdr));
-            std::cout << "UDP packet received." << std::endl;
+            std::cout << "Received response from IP: " << inet_ntoa(from.sin_addr) << std::endl;
             std::cout << "Source Port: " << ntohs(recv_udp_header->source) << std::endl;
             std::cout << "Destination Port: " << ntohs(recv_udp_header->dest) << std::endl;
+
+            // Check if the response matches your criteria
+            if (ntohs(recv_udp_header->dest) == 4048 && ntohs(recv_udp_header->source) == 63765) {    
+    
+                std::cout << "Received expected response from the server." << std::endl;
+                std::cout << "Length of the UDP packet: " << ntohs(recv_udp_header->len) << std::endl;
+            } else {
+                std::cout << "Unexpected response." << std::endl;
+            }
+        } else {
+            std::cout << "Received non-UDP response." << std::endl;
         }
     }
-    
-    
-    // Close the socket
-    close(sock);
 
+    close(sock);
+    close(recsock);
     return 0;
 }
