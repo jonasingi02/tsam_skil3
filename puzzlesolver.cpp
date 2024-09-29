@@ -13,22 +13,25 @@
 // Group details
 const uint8_t GROUP_NUMBER = 72;
 const uint32_t GROUP_SECRET = 0x96e5f6a7;  // S.E.C.R.E.T signature in host byte order
+const uint32_t signature = htonl(0x5391df19);
 
 
 //Have to create struct for IP header and UDP header not defined on macos
-struct iphdr {
-    unsigned char ihl:4;      
-    unsigned char version:4;   
-    unsigned char tos;          
-    unsigned short tot_len;     
-    unsigned short id;         
-    unsigned short frag_off;    
-    unsigned char ttl;         
-    unsigned char protocol;     
-    unsigned short check;      
-    unsigned int saddr;         
-    unsigned int daddr;         
-};
+#ifdef __APPLE__
+    struct iphdr {
+        unsigned char ihl:4;      
+        unsigned char version:4;   
+        unsigned char tos;          
+        unsigned short tot_len;     
+        unsigned short id;         
+        unsigned short frag_off;    
+        unsigned char ttl;         
+        unsigned char protocol;     
+        unsigned short check;      
+        unsigned int saddr;         
+        unsigned int daddr;         
+    };
+#endif
 
 struct udphdr {
     unsigned short source;      
@@ -40,7 +43,7 @@ struct udphdr {
 
 // Function prototypes
 int solve_1(int sock, const char* ip_address, int port);
-void solve_2(int sock, const char* ip_address, int port);
+void solve_2(int sock, const char* ip_address, int port, char* your_ip);
 void solve_3(int sock, const char* ip_address, int port);
 void solve_4(int sock, const char* ip_address, int port);
 unsigned short calc_checksum(void* b, int len);
@@ -61,7 +64,7 @@ int main(int argc, char* argv[]) {
 
     // Create the sockets
     int sock1 = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    int sock2 = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    int sock2 = socket(AF_INET, SOCK_RAW, IPPROTO_RAW);
     int sock3 = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     int sock4 = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
 
@@ -74,7 +77,7 @@ int main(int argc, char* argv[]) {
     // Solve the puzzles
     solve_1(sock1, ip_address, port1);  
     std::cout << std::endl;
-    solve_2(sock2, ip_address, port2);  
+    solve_2(sock2, ip_address, port2, "192.168.1.189");  // change to your ip
     std::cout << std::endl;
     solve_3(sock3, ip_address, port3);  
     std::cout << std::endl;
@@ -299,18 +302,101 @@ unsigned short calc_checksum(void* b, int len) {
 }
 
 
+unsigned short checksum(void* vdata, size_t length) {
+    char* data = (char*)vdata;
+    unsigned long acc = 0;
+    unsigned short* ptr = (unsigned short*)data;
+
+    for (size_t i = 0; i < length / 2; i++) {
+        acc += ntohs(ptr[i]);
+    }
+
+    if (length % 2) {
+        acc += (ntohs(data[length - 1]) & 0xFF) << 8;
+    }
+
+    while (acc >> 16) {
+        acc = (acc & 0xFFFF) + (acc >> 16);
+    }
+
+    return htons(~acc);
+}
 
 // Function to solve puzzle 2
-void solve_2(int sock, const char* ip_address, int port) {
-    struct sockaddr_in server_addr;
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_addr.s_addr = inet_addr(ip_address);
-    server_addr.sin_port = htons(port);
+void solve_2(int sock, const char* ip_address, int port, char* your_ip) {
+    struct sockaddr_in dest_addr;
+    dest_addr.sin_family = AF_INET;
+    dest_addr.sin_addr.s_addr = inet_addr(ip_address);
+    dest_addr.sin_port = htons(port);
 
-    std::cout << "Solve puzzle 2 for port " << port << std::endl;
+    struct iphdr ip_header;
+    ip_header.version = 4;       
+    ip_header.ihl = 5;           
+    ip_header.tos = 0;           
+    ip_header.tot_len = htons(sizeof(struct iphdr) + sizeof(struct udphdr) + sizeof(signature)); 
+    ip_header.id = htons(54321);   
+    ip_header.frag_off = htons(0x8000); 
+    ip_header.ttl = 64;           
+    ip_header.protocol = IPPROTO_UDP;  
+    ip_header.saddr = inet_addr(your_ip);  
+    ip_header.daddr = inet_addr(ip_address);
 
+    struct udphdr udp_header;
+    udp_header.source = htons(12345);  
+    udp_header.dest = htons(port);     
+    udp_header.len = htons(sizeof(struct udphdr) + sizeof(signature));  
+    udp_header.check = 0;  
+
+
+    struct pseudo_header {
+        uint32_t src_addr;
+        uint32_t dst_addr;
+        uint8_t zero;
+        uint8_t protocol;
+        uint16_t udp_len;
+    } psh;
+
+    psh.src_addr = ip_header.saddr;
+    psh.dst_addr = ip_header.daddr;
+    psh.zero = 0;
+    psh.protocol = IPPROTO_UDP;
+    psh.udp_len = udp_header.len;
+
+    char pseudo_packet[sizeof(psh) + sizeof(udp_header) + sizeof(signature)];
+    memcpy(pseudo_packet, &psh, sizeof(psh));
+    memcpy(pseudo_packet + sizeof(psh), &udp_header, sizeof(udp_header));
+    memcpy(pseudo_packet + sizeof(psh) + sizeof(udp_header), &signature, sizeof(signature));
+
+    udp_header.check = checksum(pseudo_packet, sizeof(pseudo_packet));
+
+    char packet[sizeof(ip_header) + sizeof(udp_header) + sizeof(signature)];
+    memcpy(packet, &ip_header, sizeof(ip_header));  
+    memcpy(packet + sizeof(ip_header), &udp_header, sizeof(udp_header));  
+    memcpy(packet + sizeof(ip_header) + sizeof(udp_header), &signature, sizeof(signature));  
+
+    ssize_t sent_bytes = sendto(sock, packet, sizeof(packet), 0, 
+                                (struct sockaddr*)&dest_addr, sizeof(dest_addr));
+
+    char recv_buffer[1024];
+    struct sockaddr_in from;
+    socklen_t from_len = sizeof(from);
+
+    // Receive the response
+    ssize_t recv_bytes = recvfrom(sock, recv_buffer, sizeof(recv_buffer), 0, 
+                                  (struct sockaddr*)&from, &from_len);
+
+
+    struct iphdr* recv_ip_header = (struct iphdr*)recv_buffer;
+    struct udphdr* recv_udp_header = (struct udphdr*)(recv_buffer + sizeof(struct iphdr));
+
+    size_t ip_header_len = recv_ip_header->ihl * 4;
+    size_t udp_header_len = sizeof(struct udphdr);
+
+    char* udp_payload = recv_buffer + ip_header_len + udp_header_len;
+    int udp_payload_len = ntohs(recv_udp_header->len) - udp_header_len;
+    std::cout << "payload from port 2" << std::string(udp_payload, udp_payload_len) << std::endl;
 }
+
 
 // Function to solve puzzle 3
 void solve_3(int sock, const char* ip_address,  int port) {

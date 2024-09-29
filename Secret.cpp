@@ -39,8 +39,8 @@ int main() {
     buffer[0] = GROUP_NUMBER;  // First byte is the group number
     buffer[1] = 0x53;
     buffer[2] = 0x91;
-    buffer[3] = 0xdf19;
-    buffer[4] = 0x5391df19;
+    buffer[3] = 0xdf;
+    buffer[4] = 0x19;
 
     // Convert the XOR result to network byte order (big-endian) and copy into the buffer
     uint32_t xor_network_order = htonl(xor_result);
