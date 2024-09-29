@@ -1,13 +1,41 @@
 #include <iostream>
 #include <cstring>
+#include <iomanip>  // Include this header for std::setw
 #include <sys/socket.h>
-#include <netinet/ip.h> 
+#include <netinet/in.h>  
+#include <netinet/ip.h>
+#include <netinet/ip_icmp.h>  
 #include <arpa/inet.h>   
 #include <unistd.h>      
+#define IP4_HDRLEN 20
+#define UDP_HDRLEN 8
 
 // Group details
 const uint8_t GROUP_NUMBER = 72;
 const uint32_t GROUP_SECRET = 0x96e5f6a7;  // S.E.C.R.E.T signature in host byte order
+
+
+//Have to create struct for IP header and UDP header not defined on macos
+struct iphdr {
+    unsigned char ihl:4;      
+    unsigned char version:4;   
+    unsigned char tos;          
+    unsigned short tot_len;     
+    unsigned short id;         
+    unsigned short frag_off;    
+    unsigned char ttl;         
+    unsigned char protocol;     
+    unsigned short check;      
+    unsigned int saddr;         
+    unsigned int daddr;         
+};
+
+struct udphdr {
+    unsigned short source;      
+    unsigned short dest;        
+    unsigned short len;         
+    unsigned short check;       
+};
 
 
 // Function prototypes
@@ -15,6 +43,7 @@ int solve_1(int sock, const char* ip_address, int port);
 void solve_2(int sock, const char* ip_address, int port);
 void solve_3(int sock, const char* ip_address, int port);
 void solve_4(int sock, const char* ip_address, int port);
+unsigned short calc_checksum(void* b, int len);
 
 int main(int argc, char* argv[]) {
     // Check if the user provided the IP address and ports
@@ -60,7 +89,45 @@ int main(int argc, char* argv[]) {
     return 0;
 }
 
-// Function to solve puzzle 1
+// Function to calculate the UDP checksum including the pseudo-header
+unsigned short udp_checksum(struct iphdr* iph, struct udphdr* udph, unsigned char* payload, int payloadlen) {
+    char buf[1024];  // Buffer for pseudo-header + UDP header + payload
+    char* ptr = buf;
+
+    // Pseudo-header fields
+    struct pseudo_header {
+        u_int32_t src_addr;
+        u_int32_t dest_addr;
+        u_int8_t placeholder;
+        u_int8_t protocol;
+        u_int16_t udp_length;
+    } psh;
+
+    // Fill in the pseudo-header
+    psh.src_addr = iph->saddr;
+    psh.dest_addr = iph->daddr;
+    psh.placeholder = 0;
+    psh.protocol = IPPROTO_UDP;
+    psh.udp_length = htons(UDP_HDRLEN + payloadlen);
+
+    // Copy pseudo-header to buffer
+    memcpy(ptr, &psh, sizeof(psh));
+    ptr += sizeof(psh);
+
+    // Copy UDP header to buffer
+    memcpy(ptr, udph, UDP_HDRLEN);
+    ptr += UDP_HDRLEN;
+
+    // Copy UDP payload (if any) to buffer
+    if (payloadlen > 0) {
+        memcpy(ptr, payload, payloadlen);
+        ptr += payloadlen;
+    }
+
+    // Calculate the checksum
+    return calc_checksum(buf, ptr - buf);
+}
+
 int solve_1(int sock, const char* ip_address, int port) {
     struct sockaddr_in server_addr;
     memset(&server_addr, 0, sizeof(server_addr));
@@ -70,27 +137,27 @@ int solve_1(int sock, const char* ip_address, int port) {
 
     uint32_t signed_challenge = 0x6282cc28;
 
-    // Step 2: Send the 4-byte message (the signature)
+    //Send the 4-byte message (the signature)
     if (sendto(sock, &signed_challenge, sizeof(signed_challenge), 0, 
                (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
         std::cerr << "Failed to send signature to port " << port << std::endl;
         close(sock);
         return 1;
     }
-    std::cout << "4-byte signature: " << signed_challenge << "sent to port " << port << std::endl;
+    std::cout << "4-byte signature: " << signed_challenge << " sent to port " << port << std::endl;
 
-    // Step 3: Prepare to receive a response
+    //Prepare to receive a response
     char response[1024];  // Buffer to hold the response
     struct sockaddr_in from_addr;
     socklen_t from_len = sizeof(from_addr);
 
-    // Set a timeout for receiving a response (optional)
+    // Set a timeout for receiving a response 
     struct timeval tv;
     tv.tv_sec = 2;  // 2 seconds timeout
     tv.tv_usec = 0;
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
-    // Step 4: Wait for a response from the server
+    //Wait for a response from the server
     int response_length = recvfrom(sock, response, sizeof(response) - 1, 0, 
                                    (struct sockaddr*)&from_addr, &from_len);
     if (response_length > 0) {
@@ -99,8 +166,139 @@ int solve_1(int sock, const char* ip_address, int port) {
     } else {
         std::cout << "No response received from port " << port << " within the timeout period." << std::endl;
     }
-    return 1;
+
+    //Get the last 6 bytes of the message
+    size_t message_len = strlen(response);
+    unsigned char message_info[6];
+    memcpy(message_info, response + message_len - 6, 6);
+
+    std::cout << "Last 6 bytes in hex: ";
+    for (int i = 0; i < 6; ++i) {
+        std::cout << std::hex << std::setw(2) << std::setfill('0') << (int)message_info[i] << " ";
+    }
+    std::cout << std::endl;
+
+
+    //Extract the checksum from the first 2 bytes
+    unsigned short checksum;
+    memcpy(&checksum, message_info, 2);
+    
+
+    //Extract the IP address from the last 4 bytes
+    unsigned int ip_addr;
+    memcpy(&ip_addr, message_info + 2, 4);
+
+
+    struct in_addr ip_struct;
+    ip_struct.s_addr = ip_addr;
+    char* src_ip = inet_ntoa(ip_struct);
+ 
+     // Buffer for the packet (IP + UDP headers)
+    char buffer[IP4_HDRLEN + UDP_HDRLEN]; 
+    
+
+    // Destination port and source port
+    int src_port = 12345;  
+
+    // Fill in the IPv4 header (20 bytes)
+    struct iphdr* iph = (struct iphdr*)buffer;
+    iph->ihl = 5;         // Internet Header Length (20 bytes)
+    iph->version = 4;     // IPv4
+    iph->tos = 0;         // Type of service
+    iph->tot_len = htons(IP4_HDRLEN + UDP_HDRLEN);  // Total length of IP + UDP header
+    iph->id = htonl(54321);    // Identification
+    iph->frag_off = 0;         // Fragment offset
+    iph->ttl = 255;            // Time to live
+    iph->protocol = IPPROTO_UDP;  // Protocol (UDP)
+    iph->check = 0;            // Set to 0 before calculating the checksum
+    iph->saddr = inet_addr(src_ip);  // Source IP address
+    iph->daddr = inet_addr(ip_address); // Destination IP address
+
+    // Calculate IP checksum
+    iph->check = calc_checksum(iph, IP4_HDRLEN);
+    std::cout << "Calculated IP checksum: " << iph->check << std::endl;
+    
+
+    // Fill in the UDP header (8 bytes)
+    struct udphdr* udph = (struct udphdr*)(buffer + IP4_HDRLEN);
+    udph->source = htons(src_port);  // Source port
+    udph->dest = htons(port);   // Destination port
+    udph->len = htons(UDP_HDRLEN);   // UDP header length
+    udph->check = 0;                 // Initialize UDP checksum to 0
+
+    // Calculate UDP checksum manually
+    unsigned short pseudo_packet[UDP_HDRLEN];
+    memcpy(pseudo_packet, udph, UDP_HDRLEN);
+    udph->check = 0; 
+
+    unsigned char payload[2] = {0x00, 0x00};  // Payload for the UDP packet
+  
+
+    unsigned int count = 0;
+    unsigned short udp_chk = udp_checksum(iph, udph, payload, 2);  // Calculate the checksum
+
+
+    // Gradually increase payload size and modify it to match the checksum
+    std::cout << "Calculated checksum: " << udp_chk << std::endl;
+    std::cout << "Expected checksum: " << checksum << std::endl;
+
+    unsigned short payload_size = ~checksum - ~udp_chk; 
+    std::cout << "Payload size: " << payload_size << std::endl;
+
+    payload[0] = payload_size & 0xFF;  
+    payload[1] = (payload_size >> 8) & 0xFF;
+    std::cout << "Payload: " << (int)payload[0] << std::endl;
+    std::cout << "Payload: " << (int)payload[1] << std::endl;
+
+    udp_chk = udp_checksum(iph, udph, payload, 2);  // Set the correct checksum in the UDP header
+    std::cout << "Calculated checksum: " << udp_chk << std::endl;
+    udph->check = htons(udp_chk); 
+
+    // Destination information
+    struct sockaddr_in dest_info;
+    memset(&dest_info, 0, sizeof(dest_info));
+    dest_info.sin_family = AF_INET;
+    dest_info.sin_addr.s_addr = inet_addr(ip_address);
+    dest_info.sin_port = htons(port);
+
+    // Send the packet as the payload via the UDP socket
+    if (sendto(sock, buffer, IP4_HDRLEN + UDP_HDRLEN, 0, 
+               (struct sockaddr*)&dest_info, sizeof(dest_info)) < 0) {
+        std::cerr << "Error sending packet." << std::endl;
+        close(sock);
+        return 1;
+    }
+
+    std::cout << "Packet sent to port " << port << " successfully." << std::endl;
+    response_length = recvfrom(sock, response, sizeof(response) - 1, 0, 
+                                   (struct sockaddr*)&from_addr, &from_len);
+    if (response_length > 0) {
+        response[response_length] = '\0';  // Null-terminate the response for printing
+        std::cout << "Received response from port " << port << ": " << response << std::endl;
+    } else {
+        std::cout << "No response received from port " << port << " within the timeout period." << std::endl;
+    }
+    return 0;
 }
+
+
+//Calculate checksum
+unsigned short calc_checksum(void* b, int len) {
+    unsigned short* buf = (unsigned short*)b;
+    unsigned int sum = 0;
+    unsigned short result;
+
+    for (sum = 0; len > 1; len -= 2)
+        sum += *buf++;
+    if (len == 1)
+        sum += *(unsigned char*)buf;
+    sum = (sum >> 16) + (sum & 0xFFFF);
+    sum += (sum >> 16);
+    result = ~sum;
+    return result;
+}
+
+
 
 // Function to solve puzzle 2
 void solve_2(int sock, const char* ip_address, int port) {
